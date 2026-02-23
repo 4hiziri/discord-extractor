@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from discord.ext import commands
 from markdownify import markdownify as html_to_markdown
 
-URL_ONLY_PATTERN = re.compile(r"^<?(https?://\S+)>?$")
+URL_ONLY_PATTERN = re.compile(r"^<?(https?://[^\s>]+)>?$")
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov", ".mkv"}
 REQUEST_TIMEOUT = 20
 
