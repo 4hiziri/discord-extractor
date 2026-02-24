@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from discord.ext import commands
 from markdownify import markdownify as html_to_markdown
 
-URL_ONLY_PATTERN = re.compile(r"https?://[\w.?=&#%~/-]+")
+URL_PATTERN = re.compile(r"<?(https?://[^\s<>]+)>?")
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov", ".mkv"}
 REQUEST_TIMEOUT = 20
 
@@ -62,11 +62,8 @@ def message_filename(message: discord.Message) -> str:
     return f"{ts}_{message.id}.txt"
 
 
-def extract_link_if_content_only_link(content: str) -> str | None:
-    match = URL_ONLY_PATTERN.match((content or "").strip())
-    if not match:
-        return None
-    return match.group(1)
+def extract_link_if_content_only_links(content: str) -> list[str]:
+    return URL_PATTERN.findall(content or "")
 
 
 def fetch_url_as_markdown(url: str) -> tuple[str, str, list[str]]:
@@ -142,30 +139,36 @@ def download_media_files(media_urls: list[str], output_dir: Path) -> list[str]:
 
 
 async def enrich_link_only_post(message: discord.Message, message_text_path: Path) -> None:
-    link = extract_link_if_content_only_link(message.content or "")
-    if not link:
+    links = extract_link_if_content_only_links(message.content or "")
+    if not links:
         return
 
     markdown_path = message_text_path.with_suffix(".md")
     media_dir = message_text_path.with_suffix("")
 
     try:
-        markdown, note, media_urls = await asyncio.to_thread(fetch_url_as_markdown, link)
+        markdown_sections: list[str] = []
+        all_media_urls: list[str] = []
 
-        if markdown:
-            markdown_path.write_text(markdown + "\n", encoding="utf-8")
+        for link in links:
+            markdown, note, media_urls = await asyncio.to_thread(fetch_url_as_markdown, link)
+            if markdown:
+                markdown_sections.append(f"# Source: {link}\n\n{markdown}")
+            if note:
+                with message_text_path.open("a", encoding="utf-8") as f:
+                    f.write(f"\nlink_note ({link}): {note}\n")
+            all_media_urls.extend(media_urls)
 
-        if media_urls:
-            downloaded = await asyncio.to_thread(download_media_files, media_urls, media_dir)
+        if markdown_sections:
+            markdown_path.write_text("\n\n".join(markdown_sections) + "\n", encoding="utf-8")
+
+        if all_media_urls:
+            downloaded = await asyncio.to_thread(download_media_files, sorted(set(all_media_urls)), media_dir)
             if downloaded:
                 with message_text_path.open("a", encoding="utf-8") as f:
                     f.write("\nlinked_media_files:\n")
                     for path in downloaded:
                         f.write(f"- {path}\n")
-
-        if note:
-            with message_text_path.open("a", encoding="utf-8") as f:
-                f.write(f"\nlink_note: {note}\n")
     except Exception as e:
         with message_text_path.open("a", encoding="utf-8") as f:
             f.write(f"\nlink_fetch_error: {e}\n")
@@ -253,4 +256,3 @@ async def run_by_env() -> None:
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     asyncio.run(run_by_env())
-
