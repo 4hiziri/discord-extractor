@@ -89,7 +89,7 @@ def fetch_url_as_markdown(url: str) -> tuple[str, str, list[str]]:
     markdown = html_to_markdown(str(soup), heading_style="ATX")
     media_urls = collect_media_urls(soup, url)
 
-    return markdown.strip(), "", media_urls
+    return markdown.strip(), media_urls
 
 
 def collect_media_urls(soup: BeautifulSoup, base_url: str) -> list[str]:
@@ -141,54 +141,51 @@ def download_media_files(media_urls: list[str], output_dir: Path) -> list[str]:
     return saved_files
 
 
-async def enrich_link_only_post(message: discord.Message, message_text_path: Path) -> None:
+def enrich_link_only_post(message: discord.Message, message_text_path: Path) -> None:
     link = extract_link_if_content_only_link(message.content or "")
     if not link:
         return
 
     markdown_path = message_text_path.with_suffix(".md")
-    media_dir = message_text_path.with_suffix("")
+    media_dir = message_text_path.with_suffix("-media")
 
     try:
-        markdown, note, media_urls = await asyncio.to_thread(fetch_url_as_markdown, link)
+        markdown, media_urls = fetch_url_as_markdown(link)
 
         if markdown:
             markdown_path.write_text(markdown + "\n", encoding="utf-8")
 
         if media_urls:
-            downloaded = await asyncio.to_thread(download_media_files, media_urls, media_dir)
+            downloaded = download_media_files(media_urls, media_dir)
             if downloaded:
                 with message_text_path.open("a", encoding="utf-8") as f:
                     f.write("\nlinked_media_files:\n")
                     for path in downloaded:
                         f.write(f"- {path}\n")
 
-        if note:
-            with message_text_path.open("a", encoding="utf-8") as f:
-                f.write(f"\nlink_note: {note}\n")
     except Exception as e:
         with message_text_path.open("a", encoding="utf-8") as f:
             f.write(f"\nlink_fetch_error: {e}\n")
 
 
-async def export_channel(channel: discord.TextChannel, output_dir: Path) -> int:
+def export_channel(channel: discord.TextChannel, output_dir: Path) -> int:
     channel_dir = output_dir / sanitize_filename(channel.name)
     channel_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
-    async for msg in channel.history(limit=None, oldest_first=True):
+    for msg in channel.history(limit=None, oldest_first=True):
         output_path = channel_dir / message_filename(msg)
         with output_path.open("w", encoding="utf-8") as f:
             f.write(format_message(msg))
 
-        await enrich_link_only_post(msg, output_path)
+        enrich_link_only_post(msg, output_path)
         count += 1
 
     print(f"Exported {count} messages from #{channel.name} -> {channel_dir}")
     return count
 
 
-async def export_guild(guild: discord.Guild, base_output_dir: Path) -> tuple[int, int]:
+def export_guild(guild: discord.Guild, base_output_dir: Path) -> tuple[int, int]:
     guild_dir = base_output_dir / f"{guild.id}_{sanitize_filename(guild.name)}"
     guild_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,10 +194,9 @@ async def export_guild(guild: discord.Guild, base_output_dir: Path) -> tuple[int
 
     for channel in guild.text_channels:
         try:
-            exported_messages = await export_channel(channel, guild_dir)
+            exported_messages = export_channel(channel, guild_dir)
             channel_count += 1
             message_count += exported_messages
-            await asyncio.sleep(0.5)
         except discord.Forbidden:
             print(f"Skipped #{channel.name}: missing read permission")
         except Exception as e:
