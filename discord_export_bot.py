@@ -11,15 +11,23 @@ from bs4 import BeautifulSoup
 from discord.ext import commands
 from markdownify import markdownify as html_to_markdown
 
-URL_ONLY_PATTERN = re.compile(r"^<?(https?://[^\s>]+)>?$")
+URL_ONLY_PATTERN = re.compile(r"https?://[\w.?=&#%~/-]+")
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov", ".mkv"}
 REQUEST_TIMEOUT = 20
 
 
 def sanitize_filename(name: str) -> str:
     """Create a filesystem-safe filename from a name."""
-    safe = re.sub(r"[^\w\-. ]", "_", name, flags=re.UNICODE).strip()
-    return safe or "item"
+    name = name.replace("/", "-")
+    name = name.replace("?", "_")
+    name = name.replace("<", "_")
+    name = name.replace(">", "_")
+    name = name.replace("\\", "_")
+    name = name.replace(":", "_")
+    name = name.replace("*", "_")
+    name = name.replace("|", "_")
+    name = name.replace("\"", "_")
+    return name
 
 
 def format_message(message: discord.Message) -> str:
@@ -35,14 +43,7 @@ def format_message(message: discord.Message) -> str:
         description = e.description or ""
         embed_lines.append(f"embed: title={title!r} description={description!r}")
 
-    lines = [
-        f"timestamp: {timestamp}",
-        f"author: {author}",
-        f"message_id: {message.id}",
-        "content:",
-        content,
-    ]
-
+    lines = [content]
     if attachment_lines:
         lines.append("")
         lines.append("attachments:")
@@ -178,8 +179,6 @@ async def export_channel(channel: discord.TextChannel, output_dir: Path) -> int:
     async for msg in channel.history(limit=None, oldest_first=True):
         output_path = channel_dir / message_filename(msg)
         with output_path.open("w", encoding="utf-8") as f:
-            f.write(f"channel: {channel.name} (id={channel.id})\n")
-            f.write(f"guild: {channel.guild.name} (id={channel.guild.id})\n\n")
             f.write(format_message(msg))
 
         await enrich_link_only_post(msg, output_path)
@@ -211,7 +210,7 @@ async def export_guild(guild: discord.Guild, base_output_dir: Path) -> tuple[int
 
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-OUTPUT_DIR = Path(os.getenv("EXPORT_OUTPUT_DIR", "exports"))
+OUTPUT_DIR = Path(os.getenv("EXPORT_OUTPUT_DIR", "discord_exports"))
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
 
 intents = discord.Intents.default()
@@ -254,3 +253,4 @@ async def run_by_env() -> None:
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     asyncio.run(run_by_env())
+
