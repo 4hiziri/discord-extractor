@@ -4,6 +4,9 @@ import os
 import re
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
+from playwright.sync_api import sync_playwright
+import json
+from fake_useragent import UserAgent
 
 import discord
 import requests
@@ -11,9 +14,57 @@ from bs4 import BeautifulSoup
 from discord.ext import commands
 from markdownify import markdownify as html_to_markdown
 
+ua = UserAgent()
+headers = {"User-Agent": ua.random}
 URL_PATTERN = re.compile(r"<?(https?://[^\s<>]+)>?")
-MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov", ".mkv"}
+MEDIA_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".mp4",
+    ".webm",
+    ".mov",
+    ".mkv",
+}
 REQUEST_TIMEOUT = 20
+
+# m3u8_url = "https://video.twimg.com/.../playlist.m3u8"
+# download via yt-dlp
+
+
+def handle_response(response):
+    # Xの内部API（TweetDetailなど）の通信を探す
+    if "TweetDetail" in response.url and response.status == 200:
+        try:
+            data = response.json()
+            # ここでJSONを解析して、本文や画像URLを抽出する
+            # 例: content = data['data']['threaded_conversation_with_injections_v2']...
+            print("ツイートデータをキャッチしました！")
+        except Exception as e:
+            pass
+
+
+with sync_playwright() as p:
+    # 規制を避けるため、User-Agentなどを偽装（iPhone等に見せかけると構造がシンプルになることも）
+    browser = p.chromium.launch(headless=True)
+    context = browser.new_context(
+        user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0"
+    )
+
+    page = context.new_page()
+
+    # レスポンスが返ってくるたびにhandle_responseを実行
+    page.on("response", handle_response)
+
+    page.goto("https://x.com/username/status/123456789")
+    page.wait_for_load_state("networkidle")  # need await
+    # can use page.
+    page.wait_for_timeout(5000)  # ロード待ち
+
+    browser.close()
 
 
 def sanitize_filename(name: str) -> str:
@@ -26,7 +77,7 @@ def sanitize_filename(name: str) -> str:
     name = name.replace(":", "_")
     name = name.replace("*", "_")
     name = name.replace("|", "_")
-    name = name.replace("\"", "_")
+    name = name.replace('"', "_")
     return name
 
 
@@ -157,7 +208,9 @@ def enrich_link_only_post(message: discord.Message, message_text_path: Path) -> 
             media_urls.extend(link_media_urls)
 
         if markdown_chunks:
-            markdown_path.write_text("\n\n".join(markdown_chunks) + "\n", encoding="utf-8")
+            markdown_path.write_text(
+                "\n\n".join(markdown_chunks) + "\n", encoding="utf-8"
+            )
 
         if media_urls:
             downloaded = download_media_files(sorted(set(media_urls)), media_dir)

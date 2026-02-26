@@ -1,7 +1,7 @@
 from discord_export_bot import extract_link_if_content_only_links
 
 
-def test_extract_link_plain_url() -> None:
+bdef test_extract_link_plain_url() -> None:
     assert extract_link_if_content_only_links("https://example.com/page") == ["https://example.com/page"]
 
 
