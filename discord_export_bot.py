@@ -1,22 +1,21 @@
-import asyncio
+import asyncio  #
 import datetime as dt
 import os
-import re
+from dotenv import load_dotenv
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
-from playwright.sync_api import sync_playwright
-import json
-from fake_useragent import UserAgent
-
+from urlextract import URLExtract
 import discord
 import requests
 from bs4 import BeautifulSoup
 from discord.ext import commands
-from markdownify import markdownify as html_to_markdown
+from markdownify import markdownify
+import yt_dlp
 
-ua = UserAgent()
-headers = {"User-Agent": ua.random}
-URL_PATTERN = re.compile(r"<?(https?://[^\s<>]+)>?")
+import xcom_extractor
+
+load_dotenv()
+
 MEDIA_EXTENSIONS = {
     ".jpg",
     ".jpeg",
@@ -35,38 +34,6 @@ REQUEST_TIMEOUT = 20
 # download via yt-dlp
 
 
-def handle_response(response):
-    # Xの内部API（TweetDetailなど）の通信を探す
-    if "TweetDetail" in response.url and response.status == 200:
-        try:
-            data = response.json()
-            # ここでJSONを解析して、本文や画像URLを抽出する
-            # 例: content = data['data']['threaded_conversation_with_injections_v2']...
-            print("ツイートデータをキャッチしました！")
-        except Exception as e:
-            pass
-
-
-with sync_playwright() as p:
-    # 規制を避けるため、User-Agentなどを偽装（iPhone等に見せかけると構造がシンプルになることも）
-    browser = p.chromium.launch(headless=True)
-    context = browser.new_context(
-        user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0"
-    )
-
-    page = context.new_page()
-
-    # レスポンスが返ってくるたびにhandle_responseを実行
-    page.on("response", handle_response)
-
-    page.goto("https://x.com/username/status/123456789")
-    page.wait_for_load_state("networkidle")  # need await
-    # can use page.
-    page.wait_for_timeout(5000)  # ロード待ち
-
-    browser.close()
-
-
 def sanitize_filename(name: str) -> str:
     """Create a filesystem-safe filename from a name."""
     name = name.replace("/", "-")
@@ -81,28 +48,29 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
-def format_message(message: discord.Message) -> str:
-    timestamp = message.created_at.astimezone(dt.timezone.utc).isoformat()
-    author = f"{message.author} ({message.author.id})"
-    content = message.content or ""
+def format_message(msg: discord.Message) -> str:
+    # timestamp = message.created_at.astimezone(dt.timezone.utc).isoformat()
+    # author = f"{message.author} ({message.author.id})"
+    content = msg.content
 
-    attachment_lines = [f"attachment: {a.url}" for a in message.attachments]
+    attachment_lines = [f"attachment: {a.url}" for a in msg.attachments]
 
     embed_lines = []
-    for e in message.embeds:
-        title = e.title or ""
-        description = e.description or ""
+    for embeds in msg.embeds:
+        title = embeds.title
+        description = embeds.description
         embed_lines.append(f"embed: title={title!r} description={description!r}")
 
-    lines = [content]
+    lines = [f"# {message_filename(msg)}\n", "## content\n"]
+    lines += [content]
     if attachment_lines:
         lines.append("")
-        lines.append("attachments:")
+        lines.append("## attachments\n")
         lines.extend(attachment_lines)
 
     if embed_lines:
         lines.append("")
-        lines.append("embeds:")
+        lines.append("## embeds\n")
         lines.extend(embed_lines)
 
     return "\n".join(lines).strip() + "\n"
@@ -110,14 +78,13 @@ def format_message(message: discord.Message) -> str:
 
 def message_filename(message: discord.Message) -> str:
     ts = message.created_at.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
-    return f"{ts}_{message.id}.txt"
+    return f"{ts}_{message.id}"
 
 
-def extract_link_if_content_only_links(content: str) -> list[str]:
-    return URL_PATTERN.findall(content or "")
+def fetch_normal_url_as_md(url) -> str:
+    print(url)
+    return ""
 
-
-def fetch_url_as_markdown(url: str) -> tuple[str, str, list[str]]:
     response = requests.get(
         url,
         timeout=REQUEST_TIMEOUT,
@@ -127,17 +94,38 @@ def fetch_url_as_markdown(url: str) -> tuple[str, str, list[str]]:
 
     content_type = response.headers.get("Content-Type", "")
     if "text/html" not in content_type:
-        return "", f"Skipped markdown conversion: non-HTML content ({content_type})", []
+        return f"not html content: <{url}>"
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(response.text, "lxml")
 
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
+    # for tag in soup(["script", "style", "noscript"]):
+    #     tag.decompose()
 
-    markdown = html_to_markdown(str(soup), heading_style="ATX")
+    markdown = markdownify(str(soup), heading_style="ATX", default_title=True)
     media_urls = collect_media_urls(soup, url)
 
     return markdown.strip(), media_urls
+
+
+async def fetch_xcom_as_md(url: str, media_path: Path) -> str:
+    content = await xcom_extractor.xcom_extract(url, media_path)
+    return content
+
+
+def fetch_youtube_as_md(url: str, media_path: Path) -> str:
+    print(f"youtube: {url}")
+
+
+async def fetch_url_as_md(url: str, media_path: Path) -> str:
+    match urlparse(url).netloc:
+        case "x.com":
+            md = await fetch_xcom_as_md(url, media_path)
+        case "youtube.com":
+            md = await fetch_youtube_as_md(url, media_path)
+        case _:
+            md = await fetch_normal_url_as_md(url, media_path)
+
+    return md
 
 
 def collect_media_urls(soup: BeautifulSoup, base_url: str) -> list[str]:
@@ -160,106 +148,65 @@ def is_media_url(url: str) -> bool:
     return any(path.endswith(ext) for ext in MEDIA_EXTENSIONS)
 
 
-def download_media_files(media_urls: list[str], output_dir: Path) -> list[str]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    saved_files: list[str] = []
+async def enrich_link_only_post(content: str, media_path: Path) -> str:
+    """
+    contentにURLが含まれている場合、それをmarkdownに展開して読み込む
+    markdownに変換するのはfetch_url_as_mdで
+    """
 
-    for index, url in enumerate(media_urls, start=1):
-        parsed = urlparse(url)
-        suffix = Path(parsed.path).suffix.lower() or ".bin"
-        filename = f"{index:02d}_{sanitize_filename(Path(parsed.path).stem or 'media')}{suffix}"
-        file_path = output_dir / filename
+    extractor = URLExtract()
+    links = extractor.find_urls(content)
+    links = list(set(links))
 
-        try:
-            with requests.get(
-                url,
-                stream=True,
-                timeout=REQUEST_TIMEOUT,
-                headers={"User-Agent": "discord-export-bot/1.0"},
-            ) as response:
-                response.raise_for_status()
-                with file_path.open("wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-            saved_files.append(str(file_path))
-        except Exception as e:
-            print(f"Failed media download: {url} ({e})")
-
-    return saved_files
-
-
-def enrich_link_only_post(message: discord.Message, message_text_path: Path) -> None:
-    links = extract_link_if_content_only_links(message.content or "")
     if not links:
-        return
-
-    markdown_path = message_text_path.with_suffix(".md")
-    media_dir = message_text_path.with_suffix("-media")
+        return content
 
     try:
         markdown_chunks: list[str] = []
-        media_urls: list[str] = []
 
         for link in links:
-            markdown, link_media_urls = fetch_url_as_markdown(link)
+            markdown = await fetch_url_as_md(link, media_path)
             if markdown:
                 markdown_chunks.append(markdown)
-            media_urls.extend(link_media_urls)
+            break
 
         if markdown_chunks:
-            markdown_path.write_text(
-                "\n\n".join(markdown_chunks) + "\n", encoding="utf-8"
-            )
-
-        if media_urls:
-            downloaded = download_media_files(sorted(set(media_urls)), media_dir)
-            if downloaded:
-                with message_text_path.open("a", encoding="utf-8") as f:
-                    f.write("\nlinked_media_files:\n")
-                    for path in downloaded:
-                        f.write(f"- {path}\n")
-
+            content += "## links\n\n".join(markdown_chunks) + "\n"
     except Exception as e:
-        with message_text_path.open("a", encoding="utf-8") as f:
-            f.write(f"\nlink_fetch_error: {e}\n")
+        print(f"Error at enrich_link_only_post: {e}")
+        exit(1)
 
 
-def export_channel(channel: discord.TextChannel, output_dir: Path) -> int:
-    channel_dir = output_dir / sanitize_filename(channel.name)
-    channel_dir.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    for msg in channel.history(limit=None, oldest_first=True):
-        output_path = channel_dir / message_filename(msg)
-        with output_path.open("w", encoding="utf-8") as f:
-            f.write(format_message(msg))
-
-        enrich_link_only_post(msg, output_path)
-        count += 1
-
-    print(f"Exported {count} messages from #{channel.name} -> {channel_dir}")
-    return count
-
-
-def export_guild(guild: discord.Guild, base_output_dir: Path) -> tuple[int, int]:
-    guild_dir = base_output_dir / f"{guild.id}_{sanitize_filename(guild.name)}"
-    guild_dir.mkdir(parents=True, exist_ok=True)
-
-    channel_count = 0
+async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
+    output_dir.mkdir(parents=True, exist_ok=True)
     message_count = 0
 
-    for channel in guild.text_channels:
-        try:
-            exported_messages = export_channel(channel, guild_dir)
-            channel_count += 1
-            message_count += exported_messages
-        except discord.Forbidden:
-            print(f"Skipped #{channel.name}: missing read permission")
-        except Exception as e:
-            print(f"Failed #{channel.name}: {e}")
+    try:
+        channel_dir = output_dir / sanitize_filename(channel.name)
+        channel_dir.mkdir(parents=True, exist_ok=True)
 
-    return channel_count, message_count
+        async for msg in channel.history(limit=None, oldest_first=True):
+            output_filename = channel_dir / (message_filename(msg) + ".md")
+            media_path = channel_dir / (message_filename(msg) + "-media")
+            media_path.mkdir(parents=True, exist_ok=True)
+
+            content = format_message(msg)
+            content = await enrich_link_only_post(content, media_path)
+            with output_filename.open("w", encoding="utf-8") as f:
+                f.write(content)
+
+            message_count += 1
+
+        print(
+            f"Exported {message_count} messages from #{channel.name} -> {channel_dir}"
+        )
+    except discord.Forbidden:
+        print(f"Skipped #{channel.name}: missing read permission")
+    except Exception as e:
+        print(f"Exception at export_channel: #{channel.name} - {e}")
+        exit(1)
+
+    return message_count
 
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -290,19 +237,19 @@ async def export_all(ctx: commands.Context) -> None:
         await ctx.send("This command can only be used in a server channel.")
         return
 
-    channel_count, message_count = await export_guild(guild, OUTPUT_DIR)
-    await ctx.send(
-        f"Export done. {channel_count} channels / {message_count} posts exported to `{OUTPUT_DIR}`"
-    )
+    channel = ctx.channel
+    output_dir = OUTPUT_DIR / f"{sanitize_filename(ctx.guild.name)}_{ctx.guild.id}"
+    message_count = await export_channel(channel, output_dir)
+    await ctx.send(f"Export done. {message_count} posts exported to `{output_dir}`")
 
 
-async def run_by_env() -> None:
+def run_by_env() -> None:
     if not TOKEN:
         raise RuntimeError("DISCORD_BOT_TOKEN is not set")
 
-    await bot.start(TOKEN)
+    asyncio.run(bot.start(TOKEN))
 
 
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    asyncio.run(run_by_env())
+    run_by_env()

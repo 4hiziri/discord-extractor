@@ -1,3 +1,5 @@
 .env
 *.png
 discord_exports/
+__pycache__/
+
