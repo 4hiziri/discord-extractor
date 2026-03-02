@@ -16,7 +16,7 @@ ydl_opt = {
 
 
 IMG_SIZE_PAT = re.compile(r"&name=.*")
-FORMAT_PAT = re.compile(r"format=.+?&")
+IMG_FORMAT_PAT = re.compile(r"format=.+?&")
 
 
 class PostNotFoundError(Exception):
@@ -95,7 +95,9 @@ async def xcom_extract(url: str, media_path: Path) -> str:
 
         for img in imgs:
             img = re.sub(IMG_SIZE_PAT, "", img)
-            format = re.search  # :TODO extarct format
+            format = re.search(IMG_FORMAT_PAT, img).group().replace("format=", "")
+            page.goto(img)
+            page.get_by_role  # :TODO extract
         if bs("video"):
             with yt_dlp.YoutubeDL(ydl_opt) as y:
                 y.download([url])
