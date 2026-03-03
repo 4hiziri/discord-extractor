@@ -7,18 +7,8 @@ import yt_dlp
 import requests
 
 
-ydl_opt = {
-    "outtmpl": "%(title).150B.%(ext)s",
-    "ffmpeg_location": "/usr/bin/ffmpeg",
-    "format": "bestvideo+bestaudio/best",
-    "break_on_reject": True,
-    "sleep_interval": 3,
-    "max_sleep_interval": 5,
-}
-
-
 IMG_SIZE_PAT = re.compile(r"&name=.*")
-IMG_TAG_PAT = re.compile(r'<img .*+src=".+?".+?>')
+IMG_TAG_PAT = re.compile(r'<img .*?src=".+?".*?>')
 
 
 class PostNotFoundError(Exception):
@@ -56,7 +46,6 @@ def is_valid_img(img: str) -> bool:
 
 async def xcom_extract(url: str, media_path: Path) -> str:
     async with async_playwright() as p:
-        url = "https://x.com/metalnekoneko/status/2027677090527752517"
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0"
@@ -68,21 +57,20 @@ async def xcom_extract(url: str, media_path: Path) -> str:
         await page.wait_for_load_state()
 
         article = page.get_by_role("article")
-        text = (
-            await article.text_content()
-        )  # :TODO textだとあとあと変換できないから駄目、そもそもhtmlで返す想定
+        text = await article.text_content()
 
         try:
             validation_post(text)
         except PostNotFoundError:
             print(f"xcom_extract: {url} is not found. maybe deleted")
-            text = f"{url} is not found."
+            return f"{url} is not found."
+
         except PostAddultCantRedaError:
             print(f"xcom_extract: {url} is adult only.")
-            text = f"{url} is adult only, need login."
+            return f"{url} is adult only, need login."
         except PostCantReadError:
             print(f"xcom_extract: {url} needs login.")
-            text = f"{url} need login."
+            return f"{url} need login."
 
         html = await article.inner_html()
         bs = BeautifulSoup(html, "lxml")
@@ -101,16 +89,27 @@ async def xcom_extract(url: str, media_path: Path) -> str:
 
             pic_name = os.path.basename(img)
             file_name = pic_name.replace("?format=", ".")
-            with open(media_path / (pic_name.replace("?format=", ".")), "wb") as f:
+            with open(media_path / file_name, "wb") as f:
                 f.write(data)
 
-            text = re.sub(IMG_TAG_PAT, f"![[./{media_path}/{file_name}]]", text)
-
-            print("DEBUG: " + text)
+            html = re.sub(IMG_TAG_PAT, f"![[./{media_path}/{file_name}]]", html)
+            text = html
 
         if bs("video"):
+            ydl_opt = {
+                "outtmpl": f"{media_path}/%(title).150B.%(ext)s",
+                "ffmpeg_location": "/usr/bin/ffmpeg",
+                "format": "bestvideo+bestaudio/best",
+                "break_on_reject": True,
+                "sleep_interval": 3,
+                "max_sleep_interval": 5,
+            }
             with yt_dlp.YoutubeDL(ydl_opt) as y:
-                y.download([url])
+                retcode = y.download([url])
+                if retcode != 0:
+                    raise Exception(f"Cannot download video: {url}")
+                output = y.prepare_filename(y.extract_info(url, download=True))
+                html += f"\n![[{output}]]"
 
         await browser.close()
 

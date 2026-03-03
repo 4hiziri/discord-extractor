@@ -1,0 +1,46 @@
+DEBUG content: # 20260301T100008_1477606358298660927
+
+## content
+
+https://x.com/maskjiro/status/2027976240221851999?s=46&t=pnZXR309jWLfc7jqsDtBKA
+
+## embeds
+
+embed: title=None description='Claude Codeで実験がワンパターンになる構造的理由: 続編\\(1\\) メカニズム編'
+
+X: https://x.com/maskjiro/status/2027976240221851999?s=46&t=pnZXR309jWLfc7jqsDtBKA
+DEBUG content: # 20260303T074257_1478296609854062683
+
+## content
+
+https://x.com/reiketsuhidou/status/2028680881263808529?s=46&t=pnZXR309jWLfc7jqsDtBKA
+
+## embeds
+
+embed: title=None description='ジェイミー小ネタ18\n4F〜5F有利時に投げを重ねると飛ばれても天晴脚で対空することができる\n\n普段はタイミングがシビアな天晴脚対空だが、この場面では投げの硬直が切れた瞬間に押すだけで良い\n実はシーズン1のルークのガンメタルハンマーにすら負けない\\.\\.\\.'
+
+X: https://x.com/reiketsuhidou/status/2028680881263808529?s=46&t=pnZXR309jWLfc7jqsDtBKA
+[twitter] Extracting URL: https://x.com/reiketsuhidou/status/2028680881263808529?s=46&t=pnZXR309jWLfc7jqsDtBKA
+[twitter] 2028680881263808529: Downloading guest token
+[twitter] 2028680881263808529: Downloading GraphQL JSON
+[twitter] 2028680881263808529: Downloading m3u8 information
+[info] 2028680811441262593: Downloading 1 format(s): hls-1968+hls-audio-128000-Audio
+[download] discord_exports/hizirin_542712317981229076/テスト/20260303T074257_1478296609854062683-media/Reiketsu - ジェイミー小ネタ18 4F〜5F有利時に投げを重ねると飛ばれても天晴脚で対空することができる  普段はタ.mp4 has already been downloaded
+[twitter] Extracting URL: https://x.com/reiketsuhidou/status/2028680881263808529?s=46&t=pnZXR309jWLfc7jqsDtBKA
+[twitter] 2028680881263808529: Downloading guest token
+[twitter] 2028680881263808529: Downloading GraphQL JSON
+[twitter] 2028680881263808529: Downloading m3u8 information
+[info] 2028680811441262593: Downloading 1 format(s): hls-1968+hls-audio-128000-Audio
+[download] discord_exports/hizirin_542712317981229076/テスト/20260303T074257_1478296609854062683-media/Reiketsu - ジェイミー小ネタ18 4F〜5F有利時に投げを重ねると飛ばれても天晴脚で対空することができる  普段はタ.mp4 has already been downloaded
+DEBUG content: # 20260303T074313_1478296679861059676
+
+## content
+
+https://x.com/famitsu/status/2028606466207391846?s=46&t=pnZXR309jWLfc7jqsDtBKA
+
+## embeds
+
+embed: title=None description='『スト6』アレックスはスタンダードな立ち回りから一転、構えに移行するとトリッキーな攻めも可能。打撃重視のコマ投げキャラだった\nhttps://t.co/2CXPtryZSV\n\nPVも話題の新キャラを先行プレイ。ケニー・オメガ選手がモーションアクターを担当。代名詞の"Vトリ\\.\\.\\.'
+
+normal url: nhttps://t.co/2CXPtryZSV\n
+Error at enrich_link_only_post: Page.goto: net::ERR_ABORTED at nhttps://t.co/2CXPtryZSV\n

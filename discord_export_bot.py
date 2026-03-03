@@ -1,4 +1,7 @@
-import asyncio  #
+from playwright.async_api import async_playwright
+import asyncio
+import time
+import random
 import datetime as dt
 import os
 from dotenv import load_dotenv
@@ -81,9 +84,22 @@ def message_filename(message: discord.Message) -> str:
     return f"{ts}_{message.id}"
 
 
-def fetch_normal_url_as_md(url) -> str:
-    print(url)
-    return ""
+async def fetch_normal_url_as_md(url) -> str:
+    print(f"normal url: {url}")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0"
+        )
+
+        page = await context.new_page()
+
+        await page.goto(url)
+        await page.wait_for_load_state()
+        content = await page.content()
+        content = markdownify(content)
+
+    return content
 
     response = requests.get(
         url,
@@ -108,12 +124,29 @@ def fetch_normal_url_as_md(url) -> str:
 
 
 async def fetch_xcom_as_md(url: str, media_path: Path) -> str:
+    print(f"X: {url}")
     content = await xcom_extractor.xcom_extract(url, media_path)
-    return content
+    return markdownify(content, heading_style="ATX", default_title=True)
 
 
 def fetch_youtube_as_md(url: str, media_path: Path) -> str:
     print(f"youtube: {url}")
+    ydl_opt = {
+        "outtmpl": f"{media_path}/%(title).150B.%(ext)s",
+        "ffmpeg_location": "/usr/bin/ffmpeg",
+        "format": "bestvideo+bestaudio/best",
+        "break_on_reject": True,
+        "sleep_interval": 3,
+        "max_sleep_interval": 5,
+    }
+    output = ""
+    with yt_dlp.YoutubeDL(ydl_opt) as y:
+        retcode = y.download([url])
+        if retcode != 0:
+            raise Exception(f"cannot download video: {url}")
+        output = y.prepare_filename(y.extract_info(url, download=True))
+
+    return f"### {url}\n\n![[{output}]]"
 
 
 async def fetch_url_as_md(url: str, media_path: Path) -> str:
@@ -123,7 +156,7 @@ async def fetch_url_as_md(url: str, media_path: Path) -> str:
         case "youtube.com":
             md = await fetch_youtube_as_md(url, media_path)
         case _:
-            md = await fetch_normal_url_as_md(url, media_path)
+            md = await fetch_normal_url_as_md(url)
 
     return md
 
@@ -154,13 +187,15 @@ async def enrich_link_only_post(content: str, media_path: Path) -> str:
     markdownに変換するのはfetch_url_as_mdで
     """
 
+    print(f"DEBUG content: {content}")
     extractor = URLExtract()
     links = extractor.find_urls(content)
     links = list(set(links))
 
     if not links:
-        return content
+        return ""
 
+    content = ""
     try:
         markdown_chunks: list[str] = []
 
@@ -168,13 +203,15 @@ async def enrich_link_only_post(content: str, media_path: Path) -> str:
             markdown = await fetch_url_as_md(link, media_path)
             if markdown:
                 markdown_chunks.append(markdown)
-            break
+            time.sleep(random.randint(0, 3) + 5)
 
         if markdown_chunks:
-            content += "## links\n\n".join(markdown_chunks) + "\n"
+            content += f"\n### {link}\n\n".join(markdown_chunks) + "\n"
     except Exception as e:
         print(f"Error at enrich_link_only_post: {e}")
         exit(1)
+
+    return content
 
 
 async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
@@ -191,7 +228,11 @@ async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
             media_path.mkdir(parents=True, exist_ok=True)
 
             content = format_message(msg)
-            content = await enrich_link_only_post(content, media_path)
+            link_content = await enrich_link_only_post(content, media_path)
+            if link_content != "":
+                content += "\n## link contents\n\n"
+                content += link_content
+
             with output_filename.open("w", encoding="utf-8") as f:
                 f.write(content)
 
