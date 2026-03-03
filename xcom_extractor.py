@@ -68,9 +68,8 @@ async def xcom_extract(url: str, media_path: Path) -> str:
         await page.wait_for_load_state()
 
         article = page.get_by_role("article")
-        text = (
-            await article.text_content()
-        )  # :TODO textだとあとあと変換できないから駄目、そもそもhtmlで返す想定
+        html = article.inner_html()
+        text = await article.text_content()
 
         try:
             validation_post(text)
