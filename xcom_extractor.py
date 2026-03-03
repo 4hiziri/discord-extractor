@@ -57,6 +57,8 @@ async def xcom_extract(url: str, media_path: Path) -> str:
         await page.wait_for_load_state()
 
         article = page.get_by_role("article")
+
+        html = article.inner_html()
         text = await article.text_content()
 
         try:
