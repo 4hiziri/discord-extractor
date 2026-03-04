@@ -5,6 +5,12 @@ import re
 import os
 import yt_dlp
 import requests
+from dotenv import load_dotenv
+import time
+import random
+
+
+load_dotenv()
 
 
 IMG_SIZE_PAT = re.compile(r"&name=.*")
@@ -75,35 +81,41 @@ async def xcom_extract(url: str, media_path: Path) -> str:
 
         html = await article.inner_html()
         bs = BeautifulSoup(html, "lxml")
+
         # extract content
         # img
-        # アイコンはhttps://pbs.twimg.com/profile_images/*/*__normal.jpgになってるので除外する
         imgs = bs("img")
         imgs = [img["src"] for img in imgs]
         imgs = [img for img in imgs if is_valid_img(img)]
 
-        for img in imgs:
-            img = re.sub(IMG_SIZE_PAT, "", img)
-            data = requests.get(img)
-            data.raise_for_status()
-            data = data.content
+        if imgs:
+            media_path.mkdir(parents=True, exist_ok=True)
+            for img in imgs:
+                img = re.sub(IMG_SIZE_PAT, "", img)
+                data = requests.get(img)
+                data.raise_for_status()
+                data = data.content
 
-            pic_name = os.path.basename(img)
-            file_name = pic_name.replace("?format=", ".")
-            with open(media_path / file_name, "wb") as f:
-                f.write(data)
+                pic_name = os.path.basename(img)
+                file_name = pic_name.replace("?format=", ".")
+                with open(media_path / file_name, "wb") as f:
+                    f.write(data)
+
+                time.sleep(3 + random.randint(0, 2))
 
             html = re.sub(IMG_TAG_PAT, f"![[./{media_path}/{file_name}]]", html)
             text = html
 
+        # extract video
         if bs("video"):
+            media_path.mkdir(parents=True, exist_ok=True)
             ydl_opt = {
                 "outtmpl": f"{media_path}/%(title).150B.%(ext)s",
                 "ffmpeg_location": "/usr/bin/ffmpeg",
                 "format": "bestvideo+bestaudio/best",
                 "break_on_reject": True,
-                "sleep_interval": 3,
-                "max_sleep_interval": 5,
+                "sleep_interval": 5,
+                "max_sleep_interval": 10,
             }
             with yt_dlp.YoutubeDL(ydl_opt) as y:
                 retcode = y.download([url])

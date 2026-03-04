@@ -4,13 +4,11 @@ import time
 import random
 import datetime as dt
 import os
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
 from urlextract import URLExtract
 import discord
-import requests
-from bs4 import BeautifulSoup
 from discord.ext import commands
 from markdownify import markdownify
 import yt_dlp
@@ -62,7 +60,7 @@ def format_message(msg: discord.Message) -> str:
     for embeds in msg.embeds:
         title = embeds.title
         description = embeds.description
-        embed_lines.append(f"embed: title={title!r} description={description!r}")
+        embed_lines.append(f"### {title}\n\n{description}\n")
 
     lines = [f"# {message_filename(msg)}\n", "## content\n"]
     lines += [content]
@@ -101,27 +99,6 @@ async def fetch_normal_url_as_md(url) -> str:
 
     return content
 
-    response = requests.get(
-        url,
-        timeout=REQUEST_TIMEOUT,
-        headers={"User-Agent": "discord-export-bot/1.0"},
-    )
-    response.raise_for_status()
-
-    content_type = response.headers.get("Content-Type", "")
-    if "text/html" not in content_type:
-        return f"not html content: <{url}>"
-
-    soup = BeautifulSoup(response.text, "lxml")
-
-    # for tag in soup(["script", "style", "noscript"]):
-    #     tag.decompose()
-
-    markdown = markdownify(str(soup), heading_style="ATX", default_title=True)
-    media_urls = collect_media_urls(soup, url)
-
-    return markdown.strip(), media_urls
-
 
 async def fetch_xcom_as_md(url: str, media_path: Path) -> str:
     print(f"X: {url}")
@@ -131,6 +108,7 @@ async def fetch_xcom_as_md(url: str, media_path: Path) -> str:
 
 def fetch_youtube_as_md(url: str, media_path: Path) -> str:
     print(f"youtube: {url}")
+    media_path.mkdir(parents=True, exist_ok=True)
     ydl_opt = {
         "outtmpl": f"{media_path}/%(title).150B.%(ext)s",
         "ffmpeg_location": "/usr/bin/ffmpeg",
@@ -153,6 +131,7 @@ async def fetch_url_as_md(url: str, media_path: Path) -> str:
     match urlparse(url).netloc:
         case "x.com":
             md = await fetch_xcom_as_md(url, media_path)
+            time.sleep(12 + random.randint(0, 3))
         case "youtube.com":
             md = await fetch_youtube_as_md(url, media_path)
         case _:
@@ -161,33 +140,12 @@ async def fetch_url_as_md(url: str, media_path: Path) -> str:
     return md
 
 
-def collect_media_urls(soup: BeautifulSoup, base_url: str) -> list[str]:
-    media_urls: set[str] = set()
-
-    for img in soup.select("img[src]"):
-        media_urls.add(urljoin(base_url, img.get("src", "")))
-
-    for video in soup.select("video[src]"):
-        media_urls.add(urljoin(base_url, video.get("src", "")))
-
-    for source in soup.select("video source[src], source[src]"):
-        media_urls.add(urljoin(base_url, source.get("src", "")))
-
-    return [u for u in sorted(media_urls) if is_media_url(u)]
-
-
-def is_media_url(url: str) -> bool:
-    path = urlparse(url).path.lower()
-    return any(path.endswith(ext) for ext in MEDIA_EXTENSIONS)
-
-
 async def enrich_link_only_post(content: str, media_path: Path) -> str:
     """
     contentにURLが含まれている場合、それをmarkdownに展開して読み込む
     markdownに変換するのはfetch_url_as_mdで
     """
 
-    print(f"DEBUG content: {content}")
     extractor = URLExtract()
     links = extractor.find_urls(content)
     links = list(set(links))
@@ -215,6 +173,7 @@ async def enrich_link_only_post(content: str, media_path: Path) -> str:
 
 
 async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
+    global bot
     output_dir.mkdir(parents=True, exist_ok=True)
     message_count = 0
 
@@ -225,7 +184,10 @@ async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
         async for msg in channel.history(limit=None, oldest_first=True):
             output_filename = channel_dir / (message_filename(msg) + ".md")
             media_path = channel_dir / (message_filename(msg) + "-media")
-            media_path.mkdir(parents=True, exist_ok=True)
+
+            if "!export_all" in msg.content or msg.author.bot:
+                print("skip  bot or cammand message")
+                continue
 
             content = format_message(msg)
             link_content = await enrich_link_only_post(content, media_path)
@@ -238,9 +200,7 @@ async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
 
             message_count += 1
 
-        print(
-            f"Exported {message_count} messages from #{channel.name} -> {channel_dir}"
-        )
+        print(f"Exported {message_count} messages@#{channel.name} to {channel_dir}")
     except discord.Forbidden:
         print(f"Skipped #{channel.name}: missing read permission")
     except Exception as e:
@@ -279,9 +239,10 @@ async def export_all(ctx: commands.Context) -> None:
         return
 
     channel = ctx.channel
-    output_dir = OUTPUT_DIR / f"{sanitize_filename(ctx.guild.name)}_{ctx.guild.id}"
+    guild_dir = f"{sanitize_filename(ctx.guild.name)}_{ctx.guild.id}"
+    output_dir = OUTPUT_DIR / guild_dir
     message_count = await export_channel(channel, output_dir)
-    await ctx.send(f"Export done. {message_count} posts exported to `{output_dir}`")
+    await ctx.send(f"Export done. {message_count} posts exported to {output_dir}")
 
 
 def run_by_env() -> None:
