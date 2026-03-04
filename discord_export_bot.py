@@ -241,14 +241,16 @@ async def export_all(ctx: commands.Context) -> None:
     channel = ctx.channel
     guild_dir = f"{sanitize_filename(ctx.guild.name)}_{ctx.guild.id}"
     output_dir = OUTPUT_DIR / guild_dir
-    message_count = await export_channel(channel, output_dir)
-    await ctx.send(f"Export done. {message_count} posts exported to {output_dir}")
+    try:
+        message_count = await export_channel(channel, output_dir)
+        await ctx.send(f"Export done. {message_count} posts exported to {output_dir}")
+    except Exception as e:
+        ctx.send(f"Export failed: {e}")
 
 
 def run_by_env() -> None:
     if not TOKEN:
         raise RuntimeError("DISCORD_BOT_TOKEN is not set")
-
     asyncio.run(bot.start(TOKEN))
 
 
