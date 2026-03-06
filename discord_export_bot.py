@@ -16,7 +16,7 @@ import yt_dlp
 import xcom_extractor
 
 load_dotenv()
-
+CMD_SET = ["!export_all", "!count_up", "!delete_all", "!delete_cmd"]
 MEDIA_EXTENSIONS = {
     ".jpg",
     ".jpeg",
@@ -49,32 +49,41 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
-def format_message(msg: discord.Message) -> str:
-    # timestamp = message.created_at.astimezone(dt.timezone.utc).isoformat()
-    # author = f"{message.author} ({message.author.id})"
-    content = msg.content
+def extract_msg_field(msg: discord.Message) -> str:
+    """
+    embedとattachmentを処理する
+    embedはバックアップ用途(Xのポストなどが消えてもCDNにキャッシュが残るため)なのでproxy_urlを保存するようにする
+    出力はmarkdown、H2
+    """
 
-    attachment_lines = [f"attachment: {a.url}" for a in msg.attachments]
+    content = ""
 
     embed_lines = []
-    for embeds in msg.embeds:
-        title = embeds.title
-        description = embeds.description
-        embed_lines.append(f"### {title}\n\n{description}\n")
+    if msg.embeds:
+        content = "\n## embeds\n\n"
+    for embed in msg.embeds:
+        if embed:
+            title = embed.title
+            description = embed.description
+            embed_content = f"### {title}\n\n{description}\n"
+            if embed.thumbnail is not None:
+                embed_content += f"[cached thumbnail]({embed.thumbnail.proxy_url})\n"
+            if embed.image is not None:
+                embed_content += f"[cached image]({embed.image.proxy_url})\n"
+            if embed.video is not None:
+                embed_content += f"[cached video]({embed.video.proxy_url})\n"
+            if embed.fields is not None:
+                print(embed.fields)
 
-    lines = [f"# {message_filename(msg)}\n", "## content\n"]
-    lines += [content]
+            # import json
+            # print(f"DEBUG: {json.dumps(embed.to_dict())}")
+            embed_lines.append(embed_content)
+
+    attachment_lines = [f"attachment: <{a.url}>\n" for a in msg.attachments]
     if attachment_lines:
-        lines.append("")
-        lines.append("## attachments\n")
-        lines.extend(attachment_lines)
+        content += "## attachments\n".join(attachment_lines, "\n")
 
-    if embed_lines:
-        lines.append("")
-        lines.append("## embeds\n")
-        lines.extend(embed_lines)
-
-    return "\n".join(lines).strip() + "\n"
+    return content
 
 
 def message_filename(message: discord.Message) -> str:
@@ -82,7 +91,7 @@ def message_filename(message: discord.Message) -> str:
     return f"{ts}_{message.id}"
 
 
-async def fetch_normal_url_as_md(url) -> str:
+async def fetch_normal_url_as_md(url: str, media_path: Path) -> str:
     print(f"normal url: {url}")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -91,13 +100,26 @@ async def fetch_normal_url_as_md(url) -> str:
         )
 
         page = await context.new_page()
+        res = await page.goto(url, timeout=60000, wait_until="load")
+        time.sleep(10)
+        content_type = res.header_value("content-type")
 
-        await page.goto(url)
-        await page.wait_for_load_state()
-        content = await page.content()
-        content = markdownify(content)
+        print(f"DEBUG2: {url} @ {content_type}")
 
-    return content
+        if content_type.startswith("text/"):
+            content = await page.content()
+            md = markdownify(content, heading_style="ATX", default_title=True)
+        elif content_type.startswith("image/") or content_type.startswith("video/"):
+            ext = content_type.replace("image/").replace("video/")
+            base_name = os.path.basename(url)[0:100]
+            file_name = media_path / (f"{base_name}.{ext}")
+            with open(file_name, "wb") as f:
+                f.write(res.body())
+            md = f"[url]({file_name})\n"
+        else:
+            raise Exception(f"Not handling content_type! {content_type}@{url}")
+
+    return md
 
 
 async def fetch_xcom_as_md(url: str, media_path: Path) -> str:
@@ -124,77 +146,72 @@ def fetch_youtube_as_md(url: str, media_path: Path) -> str:
             raise Exception(f"cannot download video: {url}")
         output = y.prepare_filename(y.extract_info(url, download=True))
 
-    return f"### {url}\n\n![[{output}]]"
+    return f"<{url}>\n\n![[{output}]]"
 
 
-async def fetch_url_as_md(url: str, media_path: Path) -> str:
-    match urlparse(url).netloc:
-        case "x.com":
-            md = await fetch_xcom_as_md(url, media_path)
-            time.sleep(12 + random.randint(0, 3))
-        case "youtube.com":
-            md = await fetch_youtube_as_md(url, media_path)
-        case _:
-            md = await fetch_normal_url_as_md(url)
+async def fetch_url_as_md(urls: list(str), media_path: Path) -> str:
+    """
+    linkのリストを受け取って処理して返す、Hは気にしない
+    """
+
+    md = ""
+    for url in urls:
+        md += f"#### <{url}>"
+        match urlparse(url).netloc:
+            case "x.com":
+                md += await fetch_xcom_as_md(url, media_path) + "\n"
+                time.sleep(12 + random.randint(0, 3))
+            case "youtube.com":
+                md += await fetch_youtube_as_md(url, media_path) + "\n"
+            case _:
+                md += await fetch_normal_url_as_md(url, media_path) + "\n"
+        time.sleep(3 + random.randint(0, 3))
 
     return md
 
 
-async def enrich_link_only_post(content: str, media_path: Path) -> str:
+async def msg_to_md(msg: discord.Message, media_path: Path) -> str:
     """
     contentにURLが含まれている場合、それをmarkdownに展開して読み込む
     markdownに変換するのはfetch_url_as_mdで
     """
 
+    content = f"# {msg.id}\n\n"
+    content = "## content\n\n"
+    content += msg.content + "\n"
     extractor = URLExtract()
-    links = extractor.find_urls(content)
+    links = extractor.find_urls(msg.content)
     links = list(set(links))
 
-    if not links:
-        return ""
+    if links:
+        try:
+            markdown = await fetch_url_as_md(links, media_path)
+        except Exception as e:
+            print(f"fetch: Error @ {links}, {e}")
+            markdown = f"fetch error: {links}"
+        content += f"\n### links\n\n{markdown}\n"
 
-    content = ""
-    try:
-        markdown_chunks: list[str] = []
-
-        for link in links:
-            markdown = await fetch_url_as_md(link, media_path)
-            if markdown:
-                markdown_chunks.append(markdown)
-            time.sleep(random.randint(0, 3) + 5)
-
-        if markdown_chunks:
-            content += f"\n### {link}\n\n".join(markdown_chunks) + "\n"
-    except Exception as e:
-        print(f"Error at enrich_link_only_post: {e}")
-        exit(1)
+    content += extract_msg_field(msg)
 
     return content
 
 
 async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
-    global bot
     output_dir.mkdir(parents=True, exist_ok=True)
     message_count = 0
 
-    try:
-        channel_dir = output_dir / sanitize_filename(channel.name)
-        channel_dir.mkdir(parents=True, exist_ok=True)
+    channel_dir = output_dir / sanitize_filename(channel.name)
+    channel_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
         async for msg in channel.history(limit=None, oldest_first=True):
+            if any([cmd in msg.content for cmd in CMD_SET]) or msg.author.bot:
+                print("skip  bot or cammand message")
+                continue
             output_filename = channel_dir / (message_filename(msg) + ".md")
             media_path = channel_dir / (message_filename(msg) + "-media")
 
-            if "!export_all" in msg.content or msg.author.bot:
-                print("skip  bot or cammand message")
-                continue
-
-            content = format_message(msg)
-            link_content = await enrich_link_only_post(content, media_path)
-            if link_content != "":
-                content += "\n## link contents\n\n"
-                content += link_content
-
+            content = await msg_to_md(msg, media_path)
             with output_filename.open("w", encoding="utf-8") as f:
                 f.write(content)
 
@@ -203,9 +220,6 @@ async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
         print(f"Exported {message_count} messages@#{channel.name} to {channel_dir}")
     except discord.Forbidden:
         print(f"Skipped #{channel.name}: missing read permission")
-    except Exception as e:
-        print(f"Exception at export_channel: #{channel.name} - {e}")
-        exit(1)
 
     return message_count
 
@@ -225,7 +239,7 @@ bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 @bot.event
 async def on_ready() -> None:
     print(f"Logged in as {bot.user} (id={bot.user.id})")
-    print("Ready. Use command: !export_all")
+    print("Ready. Use command: !export_all !count_up !delete_all")
 
 
 @bot.command(name="export_all")
@@ -245,7 +259,47 @@ async def export_all(ctx: commands.Context) -> None:
         message_count = await export_channel(channel, output_dir)
         await ctx.send(f"Export done. {message_count} posts exported to {output_dir}")
     except Exception as e:
-        ctx.send(f"Export failed: {e}")
+        await ctx.send(f"Export failed: {e}")
+
+
+@bot.command(name="count_up")
+@commands.has_permissions(administrator=True)
+async def count_up(ctx: commands.Context) -> None:
+    await ctx.send("Start count...")
+    print("count_up: start")
+    msg_num = len([msg async for msg in ctx.channel.history(limit=None)])
+    print("count_up: end")
+    await ctx.send(f"This channel has {msg_num} messages")
+    await ctx.send(f"Estimate time: {(msg_num * 20) / 60} min")
+
+    return
+
+
+@bot.command(name="delete_all")
+@commands.has_permissions(administrator=True)
+async def delete_all(ctx: commands.Context) -> None:
+    await ctx.send("Delete all message start")
+    print("delete_all: start")
+    async for msg in ctx.channel.history(limit=None):
+        await msg.delete()
+    print("delete_all: end")
+    await ctx.send("Deleted")
+
+    return
+
+
+@bot.command(name="delete_cmd")
+@commands.has_permissions(administrator=True)
+async def delete_cmd(ctx: commands.Context) -> None:
+    await ctx.send("Delete command message start")
+    print("delete_cmd: start")
+    async for msg in ctx.channel.history(limit=None):
+        if any([cmd in msg.content for cmd in CMD_SET]) or msg.author.bot:
+            await msg.delete()
+    print("delete_cmd: end")
+    await ctx.send("delete end")
+
+    return
 
 
 def run_by_env() -> None:
