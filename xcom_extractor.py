@@ -34,14 +34,16 @@ class JSNotRunning(Exception):
 
 
 def validation_post(text: str) -> None:
-    not_found_text = "Hmm...this page doesn’t exist. Try searching for something else."
+    not_found_text1 = "Hmm...this page doesn’t exist. Try searching for something else."
+    not_found_text2 = "表示する内容がありません"
+    not_found_text3 = "Nothing to see here"
     adult_text = "Age-restricted adult content"
     need_login_text = "you’ll need to log in to X"
     js_missing = "JavaScript is not available."
 
     if js_missing in text:
         raise JSNotRunning
-    elif not_found_text in text:
+    elif not_found_text1 in text or not_found_text2 in text or not_found_text3 in text:
         raise PostNotFoundError
     elif adult_text in text:
         raise PostAddultCantRedaError
