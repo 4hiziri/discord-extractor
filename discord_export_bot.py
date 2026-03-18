@@ -206,7 +206,7 @@ async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
 
     try:
         async for msg in channel.history(limit=None, oldest_first=True):
-            if msg.content in tree.get_commands() or msg.author.bot:
+            if msg.author.bot:
                 print("skip  bot or cammand message")
                 continue
             output_filename = channel_dir / (message_filename(msg) + ".md")
@@ -217,6 +217,9 @@ async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
                 f.write(content)
 
             message_count += 1
+            if message_count % 50 == 0:
+                print(f"exported {message_count} messages")
+                await channel.send(f"exported {message_count} messages, please wait...")
 
         print(f"Exported {message_count} messages@#{channel.name} to {channel_dir}")
     except discord.Forbidden:
@@ -228,7 +231,7 @@ async def export_channel(channel: discord.Channel, output_dir: Path) -> int:
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 OUTPUT_DIR = Path(os.getenv("EXPORT_OUTPUT_DIR", "discord_exports"))
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
-GUILD_ID = os.getenv("GUILD_ID")
+GUILD_ID = int(os.getenv("GUILD_ID"))
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -245,18 +248,19 @@ async def on_ready() -> None:
     print(f"Logged in as {client.user} (id={client.user.id})")
     cmd_list = [cmd.name for cmd in tree.get_commands()]
     print(f"Ready. Use command: {cmd_list}")
-    await tree.sync(guild=GUILD_ID)
+    guild = discord.Object(id=GUILD_ID)
+    tree.copy_global_to(guild=guild)
+    await tree.sync(guild=guild)
 
 
 @tree.command(name="export_all", description="export up post")
 @app_commands.checks.has_permissions(administrator=True)
 async def export_all(interaction: Interaction) -> None:
-    await interaction.response.defer()
-    await interaction.followup.send("Export started. This may take a while...")
+    await interaction.response.send_message("Export started. please wait...")
 
     guild = interaction.guild
     if guild is None:
-        await interaction.followup.send("This command can only be used in a server channel.")
+        await interaction.channel.send("This command can only be used in a server channel.")
         return
 
     channel = interaction.channel
@@ -264,11 +268,9 @@ async def export_all(interaction: Interaction) -> None:
     output_dir = OUTPUT_DIR / guild_dir
     try:
         message_count = await export_channel(channel, output_dir)
-        await interaction.followup.send(
-            f"Export done. {message_count} posts exported to {output_dir}"
-        )
     except Exception as e:
-        await interaction.followup.send(f"Export failed: {e}")
+        await interaction.channel.send(f"Export failed: {e}")
+    await interaction.channel.send(f"Export done. {message_count} posts exported to {output_dir}")
 
 
 @tree.command(name="count_up", description="count up post")
@@ -291,16 +293,17 @@ class DeleteYesNoView(discord.ui.View):
         super().__init__(timeout=None)  # timeoutは自由にint型で指定可
 
     @discord.ui.button(label="Yes", style=discord.ButtonStyle.danger)
-    async def yes(self, interaction: discord.Interaction, button: discord.Button):
+    async def yes(self, interaction: discord.Interaction, button: discord.ui.Button):
         print("delete_all: start")
+        await interaction.response.defer()
         await interaction.followup.send("Start")
         await interaction.channel.purge(limit=None)
         print("delete_all: end")
         await interaction.followup.send("Deleted")
 
     @discord.ui.button(label="No")
-    async def no(self, interaction: discord.Interaction, button: discord.Button):
-        await interaction.response.send("Delete canceled")
+    async def no(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Delete canceled")
 
 
 # @app_commands.choices(
@@ -314,7 +317,7 @@ class DeleteYesNoView(discord.ui.View):
 async def delete_all(interaction: Interaction) -> None:
     await interaction.response.defer(thinking=True)
     await interaction.followup.send("Delete all message start")
-    await interaction.followup.send("realy do?", view=DeleteYesNoView)
+    await interaction.followup.send("realy do?", view=DeleteYesNoView())
 
     return
 
@@ -326,7 +329,7 @@ async def delete_cmd(interaction: Interaction) -> None:
     await interaction.followup.send("Delete command message start")
     print("delete_cmd: start")
     async for msg in interaction.channel.history(limit=None):
-        if msg.author.bot or msg.content in tree.get_commands():
+        if msg.author.bot:
             await msg.delete()
     await interaction.followup.send("delete end")
     print("delete_cmd: end")
@@ -334,12 +337,12 @@ async def delete_cmd(interaction: Interaction) -> None:
     return
 
 
-def run_by_env() -> None:
+def main() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if not TOKEN:
         raise RuntimeError("DISCORD_BOT_TOKEN is not set")
     asyncio.run(client.start(TOKEN))
 
 
 if __name__ == "__main__":
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    run_by_env()
+    main()
